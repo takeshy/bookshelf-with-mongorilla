@@ -1,0 +1,22 @@
+UserとBookshelfは1対1の外部リレーションとなる。UserとReadingLogは
+1対多の関係、UserとCurrentBookInfoは1対1の内部リレーション、Bookshelf
+とBookInfoは1対多の内部リレーションとなる。
+
+処理
+
+本追加時:
+  Bookshelfのbook_info_recordsを追加する本の数だけ追加。Bookshelfの1レコードの
+  ため、複数の本もatomicに同時に追加できる。
+
+読む本を選択時:
+  1. current_book_info_recにレコードがあれば、Bookshelfのbook_info_recordsのうち同じ
+  book_idのレコードをcurrent_book_info_recの内容に上書きする。
+  2. Bookshelfのbook_info_recordsのうちユーザが選択したbook_idのレコードで、
+  current_book_info_recの内容を上書きする。 
+  2.の処理が失敗しても、1.の処理を何度実行しても同じ結果のため、問題がない。
+
+読書情報記述時:
+  1. ReadingLogに読んだユーザと本を読んだページ数を登録する。
+  2. Userのtotal_read_page_numとcurrent_book_info_recのpage_num,updated_atを更新する。
+  これらは1レコードのためatomicに更新できる。また、2が失敗しても1.の情報や過去のReadingLog
+  を元に再度更新できる。
