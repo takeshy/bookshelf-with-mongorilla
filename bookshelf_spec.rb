@@ -48,11 +48,14 @@ describe  Bookshelf do
       #手元の本をBookID1の本にする
       @user.save
       #本を10ページ読みすすめる
-      @user.current_book_info.inc(10)
+      @page_num=10
+      @user.inc("total_read_page_num",@page_num)
+      @user.current_book_info.inc(@page_num)
       @user.save
       @user.reload
     end
-    it{@user.current_book_info.page_num.should == 10}
+    it{@user.total_read_page_num.should == @page_num}
+    it{@user.current_book_info.page_num.should == @page_num}
     it{@user.current_reading_logs.count.should == 1}
     describe "本を変更" do
       before do
