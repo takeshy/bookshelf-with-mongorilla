@@ -1,22 +1,104 @@
-UserとBookshelfは1対1の外部リレーションとなる。UserとReadingLogは
-1対多の関係、UserとCurrentBookInfoは1対1の内部リレーション、Bookshelf
-とBookInfoは1対多の内部リレーションとなる。
+UserとBookshelfは1対1の外部リレーション関係。
+UserとReadingLogは1対多の外部リレーション関係。
+UserとCurrentBookInfoは1対1の内部リレーション関係。
+BookshelfとBookInfoは1対多の内部リレーション関係(Array形式)。
 
 処理
 
-本追加時:
-  Bookshelfのbook_info_recordsを追加する本の数だけ追加。Bookshelfの1レコードの
-  ため、複数の本もatomicに同時に追加できる。
+本追加時
 
-読む本を選択時:
-  1. current_book_info_recにレコードがあれば、Bookshelfのbook_info_recordsのうち同じ
-  book_idのレコードをcurrent_book_info_recの内容に上書きする。
-  2. Bookshelfのbook_info_recordsのうちユーザが選択したbook_idのレコードで、
-  current_book_info_recの内容を上書きする。 
-  2.の処理が失敗しても、1.の処理を何度実行しても同じ結果のため、問題がない。
+Bookshelfにbook_info_recordsにrecordを追加する本の数だけ追加。
+book_info_recordsは、 Bookshelfのembedのため、複数の本もAtomicに同時に追加できる。
 
-読書情報記述時:
-  1. ReadingLogに読んだユーザと本を読んだページ数を登録する。
-  2. Userのtotal_read_page_numとcurrent_book_info_recのpage_num,updated_atを更新する。
-  これらは1レコードのためatomicに更新できる。また、2が失敗しても1.の情報や過去のReadingLog
-  を元に再度更新できる。
+読む本を選択時
+
+1. current_book_info_recの内容を、Bookshelfのbook_info_recordsのうち同じbook_idのレコードのデータに上書きする。 
+2. Bookshelfのbook_info_recordsのうちユーザが選択したbook_idのレコードで、 current_book_info_recの内容を上書きする。 
+2.の処理が失敗しても、1.の処理を何度実行しても同じ結果のため、問題がない。
+
+読書情報記述時
+
+1. ReadingLogに読んだユーザと本を読んだページ数を登録する。   
+2. Userのtotal_read_page_numとcurrent_book_info_recのpage_num,updated_atを更新する。   
+これらは1レコードのためatomicに更新できる。
+また、2が失敗しても1.の情報や過去のReadingLog を元にデータを補正できる。
+
+注意点
+
+current_book_info_recの本のレコードは、bookshelfのbook_info_recordsの同じ本のデータと差異があります。 
+読む本を変更した際に、book_info_recordsにcurrent_book_info_recのデータを反映することで更新されます。 
+current_book_info_recを作成せず、直接bookshelfのbook_info_recordsを更新すればいいと感じる人も 多いと思いますが、あえてcurrent_book_info_recと分けている理由は、ユーザの一動作につき、できるだけ少ない documentの読み込みと更新を実現するためです。 
+もし、bookshelfのbook_info_recordsを直接更新しようとすると、読書後にUserのtotal_read_page_num の更新とBookshelfのbook_info_recordsの更新という2回のdocumentの更新が必要となります。
+トランザクション のないMongoDBでは、片方のdocumentしか更新されなかい不整合の状態が発生し得ます。 
+そのため、不整合が起きないように単一のdocumentのみの更新にするか、起きてもリカバリーできるような documentの更新順を意識して、アプリケーションを作成する必要があります。
+
+実装
+
+github上のソース
+
+-----------
+user.rb
+-----------
+self.build:
+デフォルト値をセットするために、呼び出し元にcreateではなく、buildを呼んでもらうようにする
+
+current_book_info:
+current_book_infoはcurrent_book_info_recのHashを使ってModelを作成し、Userと1対1の内部リレーションを形成。 Userの使用元には、current_book_info_recのフォーマットを意識させない。
+
+current_reading_logs:
+ReadingLogはUserと1対多の外部リレーション。 すべて取ってくると大きすぎるので、直近5件のみを取得
+
+bookshelf:
+BookshelfはUserと1対1の外部リレーション。 Bookshelfのデータは大きくなることが予測されるので、外出しすることでUserのfindの処理を軽減させる。 まだ該当ユーザのBookshelfが作成されていない場合は、参照時に作成することで、Userのレコードしかない 状態では、必ずBookshelfが作成されるため、整合性がとれた状態になるようになる。
+
+---------------------
+book_info_field.rb
+---------------------
+renewal:
+current_book_info_recとbook_info_recordsの各レコードは同じフィールドを持つので、共通の処理をモジュールとして作成していて、renewalは、current_book_info_recのレコードをbook_info_recordsの該当レコードに反映する時、またはbook_info_recordsのレコードをcurrent_book_info_recに反映する際に使用。
+
+----------------------
+current_book_info.rb
+----------------------
+change:
+current_info_recの内容をnew_infoに更新し、save時にDBに反映されるようにしている。HashやArrayは要素の変更をMongorillaが認識しないため、Mongoドキュメントのオブジェクトのchangeを自分で編集している。@user.current_book_info_rec = @info.dupにすればMongorillaが変更を認識するため、代替可能。
+
+inc:
+読書した情報をReadingLogに書き込み、current_book_info_recを更新して、更新した内容をsave時にDBに反映されるようにしている。incを使うことで、ページ数の書き込みが競合しても上書きされない。
+
+initialize:
+embedのモデルは、親への参照を持ち、自身のレコードが変更された際は、親(Mongoドキュメントオブジェクト)のchangesにその内容を反映させる。
+
+-------------
+bookshelf.rb
+-------------
+self.build:
+デフォルト値をセットするために、呼び出し元にcreateではなく、buildを呼んでもらうようにする
+
+book_infos:
+book_infosはbook_info_recordsのArrayを使ってModelを作成し、Bookshelfと1対多の内部リレーションを形成。 Bookshelfの使用元には、book_info_recordsのフォーマットを意識させない。Arrayではなく、Hashでもeachを 使いほぼ同じ処理で実現できる。
+
+book_info:
+指定したbook_idの本があれば、Modelにマッピングして返却。なければnilを返すのでその本を所有しているかの 調査にも使える。
+
+add_book:
+Bookshelfに本を追加する際のメソッド。本自体の情報はBookInfoが持つためBookInfoに移譲しているが、複数の本を 追加した際に何冊追加したか、また登録済の本を更新しない条件をsave時に認識できるように 便宜的にnew_booksと いう配列に追加した本のIDを登録
+
+update_book:
+recの内容を同じidを持つbook_infoに更新するよう移譲
+
+save_new:
+本の追加時にすでに別プロセス等により登録されている本を追加できないようにするため、saveに条件を指定している。 bookshelfのsaveの呼び出し側はそのことを意識しないですむようにするため、saveをwrapperしている。 book_numのレコードは、配列のサイズは$size => 5などの等比の条件はできるが、$gtなどの比較は使えないため便宜的に 配列のサイズを別レコードで持つことで、 $ltを使えるようにして、要素が10個未満の場合は登録できるようにするなどの 処理が行えるようになる。
+
+---------------
+book_info.rb
+---------------
+update:
+page_num,updated_atの内容をbook_infoに更新し、save時にDBに反映されるようにしている。配列の更新は.添字.フィールドで アクセスできる。
+
+self.add:
+更新時に、複数のbook_infoが登録できるように$pushAllを使用している。Mongoドキュメントオブジェクトには、originというメソッドで DBから取得した時点でのレコードにアクセスできる。
+
+initialize:
+embedのモデルは、親への参照を持ち、自身のレコードが変更された際は、親(Mongoドキュメントオブジェクト)のchangesにその内容を反映させる。
+

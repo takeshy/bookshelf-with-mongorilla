@@ -4,14 +4,13 @@ require File.expand_path("./bookshelf", File.dirname(__FILE__))
 class BookInfo
   include BookInfoFields
 
-  def update(page_num)
+  def update(page_num,updated_at)
     idx = @bookshelf.book_info_records.index{|r| r["book_id"] == @info["book_id"] }
-    now = Time.now
     @bookshelf.changes["$set"] ||={}
     @bookshelf.changes["$set"]["book_info_records.#{idx}.page_num"] = page_num
-    @bookshelf.changes["$set"]["book_info_records.#{idx}.updated_at"] = now
+    @bookshelf.changes["$set"]["book_info_records.#{idx}.updated_at"] = updated_at
     @info["page_num"] = page_num
-    @info["updated_at"] = now
+    @info["updated_at"] = updated_at
   end
 
   def self.add(bookshelf,book_id)

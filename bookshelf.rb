@@ -32,7 +32,7 @@ class Bookshelf
   end
 
   def update_book(rec)
-    book_info(rec.book_id).update(rec.page_num)
+    book_info(rec.book_id).update(rec.page_num,rec.updated_at)
   end
 
   def save_new(condition={},opt={})
